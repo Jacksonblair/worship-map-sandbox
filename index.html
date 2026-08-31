@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Map data extraction sandbox</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
+    <style>
+      html,
+      body,
+      #map {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: #111;
+      }
+      /* Independent from MapLibre's own canvas/context entirely -- its own
+     rAF loop, never calls map.triggerRepaint(). pointer-events:none so
+     drag/scroll pass straight through to the real map underneath. */
+      #shimmer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      #panel {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 10;
+        background: rgba(17, 17, 17, 0.9);
+        border: 1px solid #4da6ff;
+        border-radius: 8px;
+        padding: 10px 12px;
+        color: #fff;
+        font-size: 12px;
+        font-family: -apple-system, sans-serif;
+        width: 260px;
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+      #panel h3 {
+        margin: 12px 0 4px;
+        font-size: 12px;
+        color: #4da6ff;
+        border-top: 1px solid #333;
+        padding-top: 8px;
+      }
+      #panel h3:first-of-type {
+        border-top: none;
+        padding-top: 0;
+        margin-top: 0;
+      }
+      #panel label {
+        display: block;
+        margin-top: 8px;
+      }
+      #panel select,
+      #panel input[type="range"] {
+        width: 100%;
+      }
+      #panel input[type="checkbox"] {
+        margin-right: 6px;
+      }
+      #stats {
+        margin-top: 8px;
+        color: #4da6ff;
+        font-variant-numeric: tabular-nums;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <!-- <canvas id="shimmer"></canvas> -->
+    <div id="panel">
+      <h3>Base map (MapLibre native)</h3>
+      <label>
+        Base style
+        <select id="baseStyleSelect">
+          <option value="dark-matter" selected>CARTO Dark Matter</option>
+          <option value="voyager">CARTO Voyager</option>
+          <option value="of-liberty">OpenFreeMap Liberty</option>
+          <option value="of-bright">OpenFreeMap Bright</option>
+          <option value="of-positron">OpenFreeMap Positron</option>
+          <option value="positron-test-2">Positron (your Maputnik save)</option>
+        </select>
+      </label>
+      <label>
+        Water color
+        <select id="waterColor"></select>
+      </label>
+      <label>
+        Building color
+        <select id="buildingColor"></select>
+      </label>
+      <label>
+        Land / park color
+        <select id="landColor"></select>
+      </label>
+      <label>
+        Road color
+        <select id="roadColor"></select>
+      </label>
+      <label>
+        Detail (100% = full)
+        <input type="range" id="detail" min="0" max="100" step="5" value="100" />
+      </label>
+      <div style="color: #888; font-size: 11px; margin-top: 4px">
+        Native MapLibre setFilter-based reduction: minor roads drop first (by class), buildings/park
+        shapes thin out by a stable even subsample. Doesn't touch water at any level.
+      </div>
+      <label>
+        Zoom preset
+        <select id="zoomPresetSelect">
+          <option value="auto" selected>Auto (live, changes as you zoom)</option>
+          <option value="zoom-12.82">Saved: zoom 12.82</option>
+        </select>
+      </label>
+      <div style="color: #888; font-size: 11px; margin-top: 4px">
+        Different from Detail above -- this widens/restores each layer's own zoom range
+        (setLayerZoomRange) so whichever layers a specific reference zoom would naturally show (e.g.
+        Positron's highway_major_casing/_inner pair, which only naturally activate at zoom 11+) stay
+        visible regardless of the map's real current zoom. Honest limit: this can't conjure geometry
+        that isn't in the loaded tile at the real zoom (vector tiles are server-generalized per
+        zoom) -- it holds a layer's visibility on, it doesn't simulate the reference zoom's actual
+        tile content.
+      </div>
+
+      <!-- Commented out (not deleted) while chasing the minimal-preset
+       "goes black" bug -- less to reason about at once. Their main.js
+       wiring is commented out the same way; uncomment both together.
+  <h3>Water shimmer</h3>
+  <label>
+    <input type="checkbox" id="waterShimmer" checked />
+    Animated water shimmer
+  </label>
+  <div style="color: #888; font-size: 11px; margin-top: 4px;">
+    Runs on its own separate canvas/GL context at full framerate --
+    never calls map.triggerRepaint(), so it doesn't force MapLibre's
+    full scene to redraw just to animate.
+  </div>
+
+  <h3>Highlight</h3>
+  <label>
+    Area
+    <select id="highlightSelect">
+      <option value="__off__">Off</option>
+      <option value="__all__">All non-road/non-water combined</option>
+    </select>
+  </label>
+  <label>
+    <input type="checkbox" id="bushTexture" />
+    Render a tiled bush texture instead of flat magenta
+  </label>
+  <div style="color: #888; font-size: 11px; margin-top: 4px;">
+    Independent of everything else on this page. Options past "All" are
+    every individual fill/fill-extrusion source-layer found dynamically
+    in the current style (excluding water and transportation) -- pick
+    one to see exactly what it covers on its own, e.g. "landuse" turned
+    out to span almost the entire residential area, continuously, right
+    through roads (that's real OSM data: zoning polygons aren't cut by
+    streets). The bush texture is a small procedurally-generated,
+    seamlessly-tiling canvas (no image asset), UV-mapped from world
+    position so it repeats consistently across every shape with no
+    per-polygon setup.
+  </div>
+
+  <h3>Forest base + roads</h3>
+  <label>
+    <input type="checkbox" id="forestRoadsToggle" />
+    Cover the whole map in forest, roads drawn over the top
+  </label>
+  <div style="color: #888; font-size: 11px; margin-top: 4px;">
+    No land classification at all -- one bush-textured quad covers the
+    entire viewport, water is drawn opaquely on top of that, then roads
+    on top of both (real per-class color via a spline through each
+    road's own points).
+  </div>
+  -->
+
+      <h3>Minimal preset</h3>
+      <label>
+        <input type="checkbox" id="minimalPresetToggle" />
+        Building + water + major roads only
+      </label>
+      <div style="color: #888; font-size: 11px; margin-top: 4px">
+        Exactly 3 categories, nothing else -- water, building, and roads matching OpenFreeMap
+        Positron's own "highway_major_inner" grouping (primary/secondary/tertiary/trunk as one
+        class). Hides every native layer's PAINT (opacity, not visibility) while active, so the
+        map's real source keeps loading tiles for this layer's own data to read -- hiding via
+        visibility instead was the confirmed cause of an earlier "screen goes black" bug (it stops
+        MapLibre from loading tiles at all for a source nothing visible references).
+      </div>
+
+      <h3>Sprites</h3>
+      <label>
+        <input type="checkbox" id="spriteToggle" checked />
+        Floating orbs above the 3 seeded places
+      </label>
+      <div style="color: #888; font-size: 11px; margin-top: 4px">
+        Three.js sprites (glowing orb texture, procedural -- no image asset), geo-anchored to St
+        Mary's Cathedral / Sydney Opera House / Queen Victoria Building, bobbing in place. Rendered
+        in its own screen-space scene using map.project() each frame rather than MapLibre's mercator
+        matrix (see spriteLayer.js's header for why), and grows/shrinks with zoom (clamped 0.4x-3x
+        around the zoom they were sized at) so getting closer actually reads as closer. Still costs
+        a full-scene repaint every frame to animate the bob (map.triggerRepaint() has no "just this
+        layer" mode, regardless of what draws the layer) -- watch fps in the stats panel if this
+        feels heavy.
+      </div>
+
+      <label>
+        <input type="checkbox" id="iconSpriteToggle" checked />
+        Dungeon-font icons instead of orbs
+      </label>
+      <div style="color: #888; font-size: 11px; margin-top: 4px">
+        Same hover/bob/zoom-scale mechanic as the orb sprites above (also Three.js, also
+        screen-space), but a Three.Sprite sampling a cropped clone of apps/mobile's dungeonmode icon
+        font (dungeon-mode-mask.png, via texture.offset/.repeat -- no manual UV shader math) instead
+        of a procedural circle -- a cross over St Mary's, an owl-like face over the Opera House, an
+        archway over the QVB. Each has its own pulsing, additively-blended glow sprite behind it,
+        reusing the same shared glow texture the orbs above use. Independent toggle from the orbs
+        above; both can be on at once to compare.
+      </div>
+
+      <h3>Comedy club names</h3>
+      <label>
+        <input type="checkbox" id="boxedLabelToggle" checked />
+        Boxed name over 3 real Sydney comedy clubs
+      </label>
+      <div style="color: #888; font-size: 11px; margin-top: 4px">
+        Web-searched real venues (The Comedy Store, Sydney Comedy Club, Happy Endings) --
+        coordinates hand-approximated from each venue's published address, same standard as the
+        other seeded places above. Each name is boxed via textBox.js's ┌─┐│└┘ layout engine,
+        rendered with REAL box-drawing glyphs -- dungeon-mode.png (used for letters) turned out to
+        reskin its punctuation-range codepoints into unrelated maze shapes, but the OTHER
+        dungeonmode font variant, dungeon-437.png, has genuine CP437 box-drawing glyphs at those
+        same positions. Border cells sample dungeon-437, letter cells sample dungeon-mode -- both
+        through the same glyphUVRect atlas math, picked per-character by boxLayout.js. Glow is real
+        bloom post-processing (glowEffects.js, Three's EffectComposer/UnrealBloomPass) instead of a
+        background halo sprite -- it thresholds/blurs the box's own actual rendered pixels, so it
+        follows the box's real shape uniformly. A ring of card-suit lights chases clockwise around
+        the box's full perimeter as a separate overlay drawn on top of an always-intact border
+        (marqueeLayout.js), independent in color/glow from the border/text. Every visual knob below
+        is per-place (labelSettings.js's schema, rendered by labelSettingsPanel.js) -- live, no
+        reload needed.
+      </div>
+
+      <details style="margin-top: 6px">
+        <summary style="cursor: pointer; color: #4da6ff">The Comedy Store</summary>
+        <div id="labelSettingsPanel-the-comedy-store"></div>
+      </details>
+      <details style="margin-top: 6px">
+        <summary style="cursor: pointer; color: #4da6ff">Sydney Comedy Club</summary>
+        <div id="labelSettingsPanel-sydney-comedy-club"></div>
+      </details>
+      <details style="margin-top: 6px">
+        <summary style="cursor: pointer; color: #4da6ff">Happy Endings</summary>
+        <div id="labelSettingsPanel-happy-endings-comedy-club"></div>
+      </details>
+
+      <h3>Diagnostics</h3>
+      <label>
+        <button type="button" id="dumpStyleStateButton" style="width: 100%">
+          Dump style state
+        </button>
+      </label>
+      <div style="color: #888; font-size: 11px; margin-top: 4px">
+        One row per layer: declared vs. live visibility, zoom range, and MapLibre's actual
+        isHidden()/source-used result at the current real zoom -- read this before guessing why
+        something isn't rendering.
+      </div>
+      <pre
+        id="styleStateOutput"
+        style="
+          color: #4da6ff;
+          font-size: 10px;
+          margin-top: 6px;
+          white-space: pre;
+          overflow-x: auto;
+          max-height: 200px;
+          overflow-y: auto;
+        "
+      ></pre>
+
+      <div id="stats">fps: --</div>
+      <div id="pageError" style="color: #ff5252; margin-top: 8px; white-space: pre-wrap"></div>
+    </div>
+
+    <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/earcut@2/dist/earcut.min.js"></script>
+    <!-- Three's own postprocessing examples (EffectComposer/RenderPass/
+     UnrealBloomPass) import the core library via the bare specifier
+     "three" internally -- this import map is what makes that resolve
+     without a bundler. Every module-file's own `import ... from "three"`
+     resolves to this exact same URL, so there's only one place the
+     pinned version lives now instead of one hardcoded string per file. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
