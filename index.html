@@ -27,9 +27,23 @@
         pointer-events: none;
       }
 
-      #panel {
+      #panelToggleButton {
         position: absolute;
         top: 12px;
+        left: 12px;
+        z-index: 11;
+        background: rgba(17, 17, 17, 0.9);
+        border: 1px solid #4da6ff;
+        border-radius: 8px;
+        padding: 6px 10px;
+        color: #4da6ff;
+        font-size: 12px;
+        font-family: -apple-system, sans-serif;
+      }
+      #panel {
+        display: none;
+        position: absolute;
+        top: 52px;
         left: 12px;
         z-index: 10;
         background: rgba(17, 17, 17, 0.9);
@@ -77,6 +91,7 @@
   </head>
   <body>
     <div id="map"></div>
+    <button type="button" id="panelToggleButton">Show settings</button>
     <!-- <canvas id="shimmer"></canvas> -->
     <div id="panel">
       <h3>Base map (MapLibre native)</h3>

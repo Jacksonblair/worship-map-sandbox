@@ -42,6 +42,20 @@ import { createBloomGlowEffect } from "./glowEffects.js";
 import { createLabelSettings } from "./labelSettings.js";
 import { renderLabelSettingsPanel } from "./labelSettingsPanel.js";
 
+// The panel is hidden by default and toggled by #panelToggleButton (see
+// index.html) -- it's a desktop dev tool (dropdowns, checkboxes, a
+// "dump style state" button) that doesn't belong showing by default on
+// a phone screen, but is still needed on demand while working on this
+// sandbox itself. Runs before anything else since it's independent of
+// the rest of this file's setup.
+const panel = document.getElementById("panel");
+const panelToggleButton = document.getElementById("panelToggleButton");
+panelToggleButton.addEventListener("click", () => {
+  const hidden = panel.style.display === "none";
+  panel.style.display = hidden ? "" : "none";
+  panelToggleButton.textContent = hidden ? "Hide settings" : "Show settings";
+});
+
 // The original three are the seeded Sydney landmarks M2 put in the real
 // API (apps/api's places seed); the rest (added later, same treatment)
 // are more real Sydney landmarks, web-searched for real coordinates
