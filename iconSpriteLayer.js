@@ -34,7 +34,6 @@ import { glyphUVRect } from "./glyphAtlas.js";
 import { zoomScaleFor } from "./zoomScale.js";
 import { createGlowLineDrawer } from "./glowLineDrawer.js";
 import { createNoopLogger } from "./logger.js";
-import { repaintOnMapChange } from "./repaintOnMapChange.js";
 
 const RADIUS_PIXELS = 16;
 const HOVER_PIXELS = 34;
@@ -52,7 +51,7 @@ export function createIconSpriteLayer(sprites, textureUrl, logger = createNoopLo
   let renderer, scene, camera, glowLineDrawer;
   let mapRef = null;
   let contextLost = false;
-  let unsubscribeRepaint = null;
+  let rafHandle = null;
   let textureReady = false;
   const objects = []; // { config, iconSprite, iconMaterial, haloSprite, haloMaterial }
 
@@ -151,10 +150,11 @@ export function createIconSpriteLayer(sprites, textureUrl, logger = createNoopLo
       contextLost = false;
       buildScene(gl);
 
-      // One repaint per real map-state change, not an unconditional
-      // every-frame loop -- scoped to exactly this layer's lifetime,
-      // unsubscribed in onRemove.
-      unsubscribeRepaint = repaintOnMapChange(map, () => map.triggerRepaint());
+      const loop = () => {
+        map.triggerRepaint();
+        rafHandle = requestAnimationFrame(loop);
+      };
+      rafHandle = requestAnimationFrame(loop);
 
       this._canvas = map.getCanvas();
       this._onContextLost = (e) => {
@@ -183,8 +183,8 @@ export function createIconSpriteLayer(sprites, textureUrl, logger = createNoopLo
       logger.log("warn", "iconSpriteLayer", "onRemove called", {
         stack: new Error().stack?.split("\n").slice(0, 4).join(" | "),
       });
-      unsubscribeRepaint?.();
-      unsubscribeRepaint = null;
+      if (rafHandle !== null) cancelAnimationFrame(rafHandle);
+      rafHandle = null;
       mapRef = null;
       this._canvas?.removeEventListener("webglcontextlost", this._onContextLost);
       this._canvas?.removeEventListener("webglcontextrestored", this._onContextRestored);

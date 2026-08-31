@@ -41,7 +41,6 @@ import * as THREE from "three";
 import { createGlowTexture } from "./glowTexture.js";
 import { zoomScaleFor } from "./zoomScale.js";
 import { createNoopLogger } from "./logger.js";
-import { repaintOnMapChange } from "./repaintOnMapChange.js";
 
 const RADIUS_PIXELS = 14;
 const HOVER_PIXELS = 34;
@@ -53,7 +52,7 @@ export function createSpriteLayer(sprites, logger = createNoopLogger()) {
   let renderer, scene, camera;
   let mapRef = null;
   let contextLost = false;
-  let unsubscribeRepaint = null;
+  let rafHandle = null;
   const spriteObjects = []; // { config, sprite, material }
 
   function buildScene(gl) {
@@ -96,10 +95,13 @@ export function createSpriteLayer(sprites, logger = createNoopLogger()) {
       contextLost = false;
       buildScene(gl);
 
-      // One repaint per real map-state change, not an unconditional
-      // every-frame loop -- scoped to exactly this layer's lifetime,
-      // unsubscribed in onRemove.
-      unsubscribeRepaint = repaintOnMapChange(map, () => map.triggerRepaint());
+      // triggerRepaint()-driven loop, scoped to exactly this layer's
+      // lifetime -- started here, cancelled in onRemove.
+      const loop = () => {
+        map.triggerRepaint();
+        rafHandle = requestAnimationFrame(loop);
+      };
+      rafHandle = requestAnimationFrame(loop);
 
       this._canvas = map.getCanvas();
       this._onContextLost = (e) => {
@@ -124,8 +126,8 @@ export function createSpriteLayer(sprites, logger = createNoopLogger()) {
       logger.log("warn", "spriteLayer", "onRemove called", {
         stack: new Error().stack?.split("\n").slice(0, 4).join(" | "),
       });
-      unsubscribeRepaint?.();
-      unsubscribeRepaint = null;
+      if (rafHandle !== null) cancelAnimationFrame(rafHandle);
+      rafHandle = null;
       mapRef = null;
       this._canvas?.removeEventListener("webglcontextlost", this._onContextLost);
       this._canvas?.removeEventListener("webglcontextrestored", this._onContextRestored);
