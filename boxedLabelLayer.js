@@ -66,6 +66,7 @@ import { createNoGlowEffect } from "./glowEffects.js";
 import { createTextureQuadCompositor } from "./textureQuadCompositor.js";
 import { createGlowLineDrawer } from "./glowLineDrawer.js";
 import { createNoopLogger } from "./logger.js";
+import { repaintOnMapChange } from "./repaintOnMapChange.js";
 
 const CELL_PIXELS = 14;
 const HOVER_PIXELS = 100; // clears the icon/orb markers' own hover+halo
@@ -140,7 +141,7 @@ export function createBoxedLabelLayer(
   let glowLineDrawer;
   let mapRef = null;
   let contextLost = false;
-  let rafHandle = null;
+  let unsubscribeRepaint = null;
   let textBaseTexture = null;
   let borderBaseTexture = null;
   const labelObjects = []; // { id, config, settings, boxWidth, boxHeight, cellSprites, marqueeSprites, localScene, localCamera, glowEffect }
@@ -292,11 +293,7 @@ export function createBoxedLabelLayer(
       contextLost = false;
       buildScene(gl);
 
-      const loop = () => {
-        map.triggerRepaint();
-        rafHandle = requestAnimationFrame(loop);
-      };
-      rafHandle = requestAnimationFrame(loop);
+      unsubscribeRepaint = repaintOnMapChange(map, () => map.triggerRepaint());
 
       this._canvas = map.getCanvas();
       this._onContextLost = (e) => {
@@ -321,8 +318,8 @@ export function createBoxedLabelLayer(
       logger.log("warn", "boxedLabelLayer", "onRemove called", {
         stack: new Error().stack?.split("\n").slice(0, 4).join(" | "),
       });
-      if (rafHandle !== null) cancelAnimationFrame(rafHandle);
-      rafHandle = null;
+      unsubscribeRepaint?.();
+      unsubscribeRepaint = null;
       mapRef = null;
       this._canvas?.removeEventListener("webglcontextlost", this._onContextLost);
       this._canvas?.removeEventListener("webglcontextrestored", this._onContextRestored);
@@ -380,6 +377,11 @@ export function createBoxedLabelLayer(
         disposeSprites(label.marqueeSprites, label.localScene);
         label.marqueeSprites = buildMarqueeSprites(label.config, label.localScene);
       }
+      // A settings change isn't a "move" event, so repaintOnMapChange's
+      // subscription won't pick it up on its own -- this used to work
+      // by accident, via the old unconditional-every-frame rAF loop
+      // picking it up on whichever frame came next.
+      mapRef?.triggerRepaint();
     },
 
     render(gl) {
